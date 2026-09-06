@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.DS_Store
+*.log
+*.pid
+.vite/
+
+# 本地仿真产物：官方 ACE 测试包和运行日志不要进仓库
+sim/logs/
+sim/ace_node/

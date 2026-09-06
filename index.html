@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>水声节点实验池</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <div id="app">
+      <div id="canvas-root"></div>
+      <div id="hud">
+        <header class="brand">
+          <div class="brand-mark">SONAR</div>
+          <div>
+            <h1>20 km 水域 · 三维声传播</h1>
+            <p>直径 20 km · 深度 4 km · 淡色透明波前</p>
+            <p id="live-status">仿真桥接未连接</p>
+          </div>
+        </header>
+
+        <aside class="panel left">
+          <section>
+            <h2>节点</h2>
+            <div class="row">
+              <button id="btn-add" class="primary" type="button">点击投放</button>
+              <button id="btn-remove" type="button">删除选中</button>
+            </div>
+            <div class="row">
+              <button id="btn-tx" type="button">设为发射</button>
+              <button id="btn-rx" type="button">设为监听</button>
+            </div>
+            <label>
+              投放深度 <span id="depth-val">水面 0 m</span>
+              <input id="add-depth" type="range" min="-4000" max="0" step="10" value="0" />
+            </label>
+            <p class="hint" id="mode-hint">当前：浏览。可点选节点，或进入投放模式在水面上单击。</p>
+            <div class="coord-grid">
+              <label>X (m)<input id="pos-x" type="number" step="10" value="0" /></label>
+              <label>Z (m)<input id="pos-z" type="number" step="10" value="0" /></label>
+              <label>深度 Y (m)<input id="pos-y" type="number" step="10" value="0" /></label>
+            </div>
+            <div class="row">
+              <button id="btn-apply-pos" type="button">应用坐标</button>
+              <button id="btn-surface" type="button">放到水面</button>
+            </div>
+            <label>
+              相对发射距离 (m)
+              <div class="row tight">
+                <input id="rel-dist" type="number" step="100" value="2000" />
+                <button id="btn-rel-dist" type="button">按距离放置</button>
+              </div>
+            </label>
+            <h2 class="sub">移动</h2>
+            <label class="check">
+              <input id="move-enabled" type="checkbox" />
+              启用巡航
+            </label>
+            <div class="coord-grid">
+              <label>航速 (m/s)<input id="move-speed" type="number" min="0" max="80" step="1" value="8" /></label>
+              <label>航向 (°)<input id="move-heading" type="number" min="0" max="359" step="1" value="90" /></label>
+              <label>升沉 (m/s)<input id="move-vspeed" type="number" step="0.5" value="0" /></label>
+            </div>
+            <label class="check">
+              <input id="move-hold" type="checkbox" checked />
+              保持当前深度
+            </label>
+            <div class="row">
+              <button id="btn-move-apply" type="button">应用移动</button>
+              <button id="btn-move-stop" type="button">停止</button>
+            </div>
+            <div id="node-list" class="node-list"></div>
+          </section>
+
+          <section>
+            <h2>发射参数</h2>
+            <label>
+              数据载荷
+              <input id="payload" type="text" maxlength="24" value="PING-OK" />
+            </label>
+            <label>
+              最大作用距离 <span id="range-val">5000 m</span>
+              <input id="range" type="range" min="200" max="20000" step="50" value="5000" />
+              <input id="range-num" type="number" min="100" max="20000" step="50" value="5000" />
+            </label>
+            <label>
+              源级 SL <span id="sl-val">200 dB</span>
+              <input id="sl" type="range" min="140" max="230" step="1" value="200" />
+            </label>
+            <label>
+              载波频率 <span id="freq-val">12 kHz</span>
+              <input id="freq" type="range" min="5" max="60" step="1" value="12" />
+            </label>
+            <label>
+              检测门限 <span id="th-val">90 dB</span>
+              <input id="th" type="range" min="70" max="150" step="1" value="90" />
+            </label>
+            <label>
+              时间倍率（慢动作） <span id="scale-val">0.20×</span>
+              <input id="timescale" type="range" min="0.02" max="1" step="0.01" value="0.20" />
+            </label>
+            <div class="row">
+              <button id="btn-ping" class="accent" type="button">发射声波</button>
+              <button id="btn-demo" type="button">重置演示</button>
+            </div>
+          </section>
+        </aside>
+
+        <aside class="panel right">
+          <section>
+            <h2>监听节点 · 接收动画</h2>
+            <div id="rx-meta" class="meta">尚未选择监听节点</div>
+            <canvas id="scope" width="420" height="140"></canvas>
+            <div id="decode" class="decode">
+              <span class="label">解码</span>
+              <span id="decode-text" class="glyphs">—</span>
+            </div>
+            <ul id="physics" class="physics"></ul>
+          </section>
+          <section>
+            <h2>到达日志</h2>
+            <div id="log" class="log"></div>
+          </section>
+        </aside>
+
+        <footer class="legend">
+          <span>拖拽旋转 · 滚轮缩放 · 可潜到水下</span>
+          <span class="swatch tx"></span>发射
+          <span class="swatch rx"></span>监听
+          <span class="swatch wave"></span>球面波前
+          <span>声速 1480 m/s · 直径 20 km · 深 4 km</span>
+        </footer>
+      </div>
+    </div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
