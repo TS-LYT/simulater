@@ -9,6 +9,7 @@ export const ROLE_LABEL = {
   rx: 'RX',
   listen: '监听',
   normal: '普通',
+  observer: '观察',
 };
 
 export const STATUS_LABEL = {
@@ -150,10 +151,10 @@ export function setModeVisibility(ui, mode) {
   if (ui.hint) ui.hint.textContent = MODE_HINT[mode] || MODE_HINT.local;
 }
 
-export function nodeRole(node, { txId, rxId, listenId }) {
+export function nodeRole(node, { txId, rxId, listenId, sendMode, mode }) {
   if (!node) return 'normal';
   if (node.id === txId) return 'tx';
-  if (node.id === rxId) return 'rx';
+  if (node.id === rxId) return sendMode === 'broadcast' && mode !== 'live' ? 'observer' : 'rx';
   if (node.id === listenId) return 'listen';
   return 'normal';
 }
@@ -165,7 +166,8 @@ export function nodeStatus(node, ctx) {
   const simTime = ctx.simTime || 0;
   const active = pulses.filter((p) => !p.finished(simTime));
   if (active.some((p) => p.sourceId === node.id)) return 'txing';
-  if (active.some((p) => p.directedDst === node.id || (p.directedDst == null && node.id !== p.sourceId && node.id === ctx.rxId))) {
+  if (active.some((p) => p.hits.get(node.id)?.success && !p.hits.get(node.id)?.overheard
+    && simTime <= p.hits.get(node.id).arrivedAt + p.packetDuration)) {
     return 'rxing';
   }
   if (node.id === ctx.listenId) return 'listening';
@@ -410,10 +412,10 @@ export function applyProtocolFromUi(ui, node) {
 
 let lastLinkKey = '';
 
-export function renderLinkResult(ui, tx, rx, hit) {
+export function renderLinkResult(ui, tx, rx, hit, broadcast = false) {
   const txName = tx ? (tx.name || `N${tx.id}`) : '—';
   const rxName = rx ? (rx.name || `N${rx.id}`) : '—';
-  const title = `TX ${txName} → RX ${rxName}`;
+  const title = broadcast ? `广播 TX ${txName} · 观察 ${rxName}` : `TX ${txName} → RX ${rxName}`;
   const key = hit
     ? [title, hit.distance, hit.tof, hit.spreading, hit.absorption, hit.receivedLevel, hit.success, hit.inRange].join('|')
     : `${title}|empty`;

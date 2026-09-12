@@ -1,6 +1,12 @@
 import * as THREE from 'three';
 
-export const BASIN_RADIUS = 10000;
+export let BASIN_RADIUS = 10000;
+export function setBasinDiameter(km, nodes = []) {
+  if (!Number.isFinite(km) || km < 1 || km > 100) throw new Error('水域直径请输入 1～100 km');
+  const required = Math.max(0, ...nodes.map(node => Math.hypot(node.x, node.z) + 140)) * 2 / 1000;
+  if (km < required) throw new Error(`现有节点需要至少 ${(Math.ceil(required * 10) / 10).toFixed(1)} km 直径；请先移动或删除边缘节点`);
+  BASIN_RADIUS = km * 500;
+}
 export const WATER_DEPTH = 4000;
 export const GRID_STEP = 1000;
 
@@ -20,9 +26,9 @@ const waterVert = /* glsl */ `
 
   void main() {
     vec3 pos = position;
-    vec3 d1 = gerstner(pos.xz, 0.18, 620.0, 0.32, normalize(vec2(1.0, 0.28)));
-    vec3 d2 = gerstner(pos.xz, 0.12, 280.0, 0.48, normalize(vec2(-0.7, 1.0)));
-    vec3 d3 = gerstner(pos.xz, 0.08, 110.0, 0.7, normalize(vec2(0.2, -1.0)));
+    vec3 d1 = gerstner(pos.xz, 0.025, 1800.0, 0.32, normalize(vec2(1.0, 0.28)));
+    vec3 d2 = gerstner(pos.xz, 0.016, 1000.0, 0.48, normalize(vec2(-0.7, 1.0)));
+    vec3 d3 = gerstner(pos.xz, 0.008, 600.0, 0.7, normalize(vec2(0.2, -1.0)));
     pos += d1 + d2 + d3;
     vHeight = pos.y;
     vec3 t = vec3(1.0, 0.0, 0.0) + vec3(0.0, d1.y + d2.y, 0.0);
@@ -51,8 +57,8 @@ const waterFrag = /* glsl */ `
     vec3 glass = vec3(0.88, 0.95, 0.98);
     vec3 rim = vec3(0.62, 0.82, 0.90);
     vec3 col = mix(glass, rim, fres * 0.5);
-    col += vec3(1.0) * spec * 0.9;
-    float alpha = 0.016 + fres * 0.14 + spec * 0.1;
+    col += vec3(1.0) * spec * 0.18;
+    float alpha = 0.008 + fres * 0.035 + spec * 0.02;
     gl_FragColor = vec4(col, alpha);
   }
 `;
@@ -72,7 +78,7 @@ const causticFrag = /* glsl */ `
   void main() {
     vec2 p = vUv * 2.0 - 1.0;
     if (length(p) > 1.0) discard;
-    vec2 uv = vUv * 14.0;
+    vec2 uv = vUv * 5.0;
     float t = uTime * 0.28;
     float c =
       sin(uv.x + sin(uv.y + t) * 1.4) *
@@ -80,7 +86,7 @@ const causticFrag = /* glsl */ `
     float caustic = smoothstep(0.2, 0.85, 0.5 + 0.5 * c);
     vec3 sand = vec3(0.22, 0.23, 0.21);
     vec3 light = vec3(0.16, 0.28, 0.30);
-    vec3 col = mix(sand, sand + light, caustic * 0.28);
+    vec3 col = mix(sand, sand + light, caustic * 0.07);
     gl_FragColor = vec4(col, 1.0);
   }
 `;
@@ -119,7 +125,7 @@ export function createBasin(scene) {
 
   const grid = new THREE.Group();
   const gridMat = new THREE.LineBasicMaterial({ color: 0x8aa8a4, transparent: true, opacity: 0.12 });
-  for (let r = GRID_STEP; r <= BASIN_RADIUS; r += GRID_STEP) {
+  for (let r = BASIN_RADIUS / 10; r <= BASIN_RADIUS + 0.01; r += BASIN_RADIUS / 10) {
     const pts = [];
     for (let i = 0; i <= 96; i++) {
       const a = (i / 96) * Math.PI * 2;
@@ -202,9 +208,9 @@ export function createSky() {
 
 export function createGridLabels() {
   const group = new THREE.Group();
-  const marks = [2000, 4000, 6000, 8000, 10000];
+  const marks = Array.from({ length: 5 }, (_, i) => BASIN_RADIUS * (i + 1) / 5);
   for (const r of marks) {
-    const label = r >= 1000 ? `${r / 1000} km` : `${r} m`;
+    const label = r >= 1000 ? `${Number((r / 1000).toFixed(2))} km` : `${Math.round(r)} m`;
     group.add(makeSprite(label, r, 20, 0));
     group.add(makeSprite(label, 0, 20, r));
   }

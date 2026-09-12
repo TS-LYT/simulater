@@ -8,9 +8,14 @@ import {
   timeOfFlight,
   waveformSample,
 } from './acoustics.js';
-import { BASIN_RADIUS, WATER_DEPTH, createBasin, createGridLabels, createSky, createWater } from './water.js';
-import { createWaveVisual, updateWaveVisual } from './wave.js';
+import { BASIN_RADIUS, WATER_DEPTH, setBasinDiameter, createBasin, createGridLabels, createSky, createWater } from './water.js';
+import { createWaveVisual, updateWaveVisual, disposeWaveObject, waveVisualFinished } from './wave.js';
+import { configureRecipients, advanceRecipient } from './propagation.js';
+import { LocalNetworkSimulator, LOCAL_POSES } from './network.js';
+import { createNetworkPanel } from './networkPanel.js';
 import { createAuv } from './auv.js';
+import { CameraController } from './CameraController.js';
+import { visualizationConfig, uuvVisualScale } from './visualizationConfig.js';
 import { connectSealinxLive, disconnectSealinxLive } from './live.js';
 import {
   ORIGIN_LABEL,
@@ -40,13 +45,7 @@ import {
 } from './uiBind.js';
 
 const MAX_NODES = 16;
-const DEMO_NODES = [
-  { x: -8000, y: -80, z: 0 },
-  { x: -4000, y: -80, z: 0 },
-  { x: 0, y: -80, z: 0 },
-  { x: 4000, y: -80, z: 0 },
-  { x: 8000, y: -80, z: 0 },
-];
+const DEMO_NODES = LOCAL_POSES;
 const KNOWN_POSES = {
   1: { x: -8000, y: -80, z: 0 },
   2: { x: -4000, y: -80, z: 0 },
@@ -79,10 +78,10 @@ root.appendChild(labelRenderer.domElement);
 
 const scene = new THREE.Scene();
 scene.fog = new THREE.FogExp2(0x8fb8b8, 0.000035);
-scene.add(createSky());
-const basin = createBasin(scene);
-scene.add(createGridLabels());
-const water = createWater();
+const sky = createSky(); scene.add(sky);
+let basin = createBasin(scene);
+let gridLabels = createGridLabels(); scene.add(gridLabels);
+let water = createWater();
 scene.add(water.mesh);
 
 const pickPlane = new THREE.Mesh(
@@ -104,9 +103,6 @@ camera.position.set(0, 4200, 14000);
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
 controls.target.set(0, -80, 0);
-controls.minDistance = 40;
-controls.maxDistance = 28000;
-controls.maxPolarAngle = Math.PI * 0.98;
 
 const nodesGroup = new THREE.Group();
 scene.add(nodesGroup);
@@ -121,6 +117,7 @@ const clock = new THREE.Clock();
 
 const state = {
   mode: 'local',
+  sendMode: 'target',
   nodes: [],
   selectedId: null,
   txId: 1,
@@ -138,20 +135,35 @@ const state = {
 };
 
 const ui = queryUi();
+const network = new LocalNetworkSimulator(() => state.nodes, handleNetworkEvent);
+const networkPanel = createNetworkPanel(network, {
+  start: () => { stopPulses(); network.start(state.simTime); refreshNodes(); },
+  pause: () => { if (network.status === 'running') network.pause(); else network.resume(); networkPanel.render(); },
+  stop: () => { network.stop(); stopPulses(); refreshNodes(); },
+  reset: () => { network.reset(); stopPulses(); refreshNodes(); },
+});
+const topologyGroup = new THREE.Group(); scene.add(topologyGroup);
 let filledId = null;
 let pointerStart = null;
-let focusAnim = null;
+const cameraController = new CameraController(camera, controls,
+  () => state.nodes.filter(node => node.online),
+  () => {
+    const tx = getNode(state.txId), rx = getNode(state.rxId);
+    return tx && rx && tx !== rx ? [tx, rx] : [];
+  });
 let distVisuals = [];
 let statusClock = 0;
 
 bindControls();
 resetDemo();
+cameraController.resetView(true);
 setMode('local');
 animate();
 
 function ctx() {
   return {
     txId: state.txId,
+    sendMode: state.mode === 'local' ? state.sendMode : 'target',
     rxId: state.rxId,
     listenId: state.listenId,
     selectedId: state.selectedId,
@@ -192,12 +204,15 @@ function applyStackDefaults(node) {
 }
 
 function stopPulses() {
+  for (const child of [...topologyGroup.children]) disposeWaveObject(child);
   state.pulses = [];
-  for (const visual of state.visuals) waveGroup.remove(visual.group);
+  for (const visual of state.visuals) disposeWaveObject(visual.group);
   state.visuals = [];
 }
 
 function setMode(mode) {
+  if (mode === 'live') { network.stop(); networkPanel.panel.hidden = true; }
+  else networkPanel.panel.hidden = false;
   const next = mode === 'live' ? 'live' : 'local';
   const prev = state.mode;
   if (prev !== next) stopPulses();
@@ -256,6 +271,27 @@ function requireLocal() {
 }
 
 function bindControls() {
+  document.getElementById('apply-basin').addEventListener('click', () => {
+    const message = document.getElementById('basin-message');
+    try {
+      setBasinDiameter(Number(document.getElementById('basin-diameter').value), state.nodes);
+      rebuildBasin();
+      message.textContent = `已应用：直径 ${BASIN_RADIUS / 500} km，半径 ${BASIN_RADIUS / 1000} km`;
+    } catch (error) { message.textContent = error.message; }
+  });
+  document.getElementById('send-mode').addEventListener('change', event => {
+    state.sendMode = event.target.value;
+    refreshNodes();
+  });
+  document.querySelectorAll('[data-view]').forEach(button => {
+    button.addEventListener('click', () => cameraController[button.dataset.view]());
+  });
+  renderer.domElement.addEventListener('dblclick', event => {
+    if (state.addMode || event.button !== 0) return;
+    pickFromEvent(event);
+    const picked = pickNode();
+    if (picked) locateNode(picked.userData.id);
+  });
   window.addEventListener('resize', onResize);
   renderer.domElement.addEventListener('pointerdown', onPointerDown, true);
   renderer.domElement.addEventListener('pointermove', onPointerMove);
@@ -307,7 +343,7 @@ function bindControls() {
   });
 
   ui.ping.addEventListener('click', transmit);
-  ui.demo.addEventListener('click', resetDemo);
+  ui.demo.addEventListener('click', () => { resetDemo(); cameraController.resetView(); });
   ui.resetWave.addEventListener('click', resetPropagation);
   ui.applyPos.addEventListener('click', applySelectedPose);
   ui.surface.addEventListener('click', () => {
@@ -427,6 +463,9 @@ function bindControls() {
 }
 
 function resetDemo() {
+  if (BASIN_RADIUS !== 10000) { setBasinDiameter(20); rebuildBasin(); }
+  network.reset();
+  state.sendMode = 'target';
   filledId = null;
   clearSceneNodes();
   DEMO_NODES.forEach((p) => addNode(p.x, p.z, p.y, { origin: 'local' }));
@@ -438,15 +477,16 @@ function resetDemo() {
   state.simTime = 0;
   state.events = [];
   ui.payload.value = 'PING-OK';
-  ui.timescale.value = '0.40';
+  ui.timescale.value = '1.00';
   ui.decode.textContent = '—';
   setAddMode(false);
   const n1 = getNode(1);
-  if (n1) pushNodeLog(n1, '演示：5 节点链 N1→N2→N3→N4→N5，间距 4 km。');
+  if (n1) pushNodeLog(n1, '演示：五节点错落水下布局，可启动自动路由、链状或簇状组网。');
   refreshNodes();
 }
 
 function resetPropagation() {
+  network.stop();
   stopPulses();
   for (const node of state.nodes) {
     node.lastRx = null;
@@ -458,6 +498,27 @@ function resetPropagation() {
   }
   ui.decode.textContent = '—';
   updateLinkPanel(true);
+}
+
+function rebuildBasin() {
+  for (const object of [basin.group, gridLabels, water.mesh]) {
+    object.traverse(child => {
+      if (child.material?.map) child.material.map.dispose();
+    });
+    disposeWaveObject(object);
+  }
+  basin = createBasin(scene);
+  gridLabels = createGridLabels(); scene.add(gridLabels);
+  water = createWater(); scene.add(water.mesh);
+  pickPlane.geometry.dispose();
+  pickPlane.geometry = new THREE.CircleGeometry(BASIN_RADIUS, 96);
+  controls.maxDistance = Math.max(38000, BASIN_RADIUS * 4);
+  camera.far = Math.max(80000, BASIN_RADIUS * 12);
+  camera.updateProjectionMatrix();
+  sky.scale.setScalar(Math.max(1, BASIN_RADIUS / 10000 * 2));
+  document.getElementById('basin-diameter').value = BASIN_RADIUS / 500;
+  document.getElementById('basin-title').textContent = `${BASIN_RADIUS / 500} km 水域`;
+  document.getElementById('basin-message').textContent = `直径 ${BASIN_RADIUS / 500} km · 半径 ${BASIN_RADIUS / 1000} km`;
 }
 
 function clearSceneNodes() {
@@ -488,6 +549,7 @@ function addNode(x, z, y = 0, opts = {}) {
   const label = document.createElement('div');
   label.className = 'node-label';
   const css = new CSS2DObject(label);
+  css.center.set(0.5, 1);
   css.position.set(0, 22, 0);
   group.add(css);
   const axes = new THREE.AxesHelper(18);
@@ -593,6 +655,7 @@ function buildNodeMesh(id) {
       obj.frustumCulled = false;
     }
   });
+  model.traverse(obj => { if (obj.material) obj.material.fog = false; });
   glow.renderOrder = 21;
   group.userData = {
     kind: 'node',
@@ -608,16 +671,12 @@ function buildNodeMesh(id) {
   return group;
 }
 
-function nodeScale(y) {
-  return y < -0.4 ? 3.4 : 1.2;
-}
-
 function syncNodeVisual(node) {
-  const s = nodeScale(node.y);
+  const s = uuvVisualScale(camera.position.distanceTo(node.group.position), node.id === state.selectedId);
   node.model.scale.setScalar(s);
   node.axes.scale.setScalar(s);
   node.axes.position.y = 8 * s;
-  if (node.labelObj) node.labelObj.position.y = 14 * s;
+  if (node.labelObj) node.labelObj.position.y = visualizationConfig.labelHeight * s;
   if (node.selectRing) node.selectRing.scale.setScalar(Math.max(1, s * 0.7));
   updateTether(node);
 }
@@ -625,12 +684,12 @@ function syncNodeVisual(node) {
 function updateTether(node) {
   const { tether, marker } = node;
   const toSurface = -node.y;
-  const s = nodeScale(node.y);
+  const s = node.model.scale.x;
   marker.position.set(0, toSurface, 0);
   marker.scale.setScalar(Math.max(1, s * 0.55));
   marker.visible = true;
   const geo = new THREE.BufferGeometry().setFromPoints([
-    new THREE.Vector3(0, 8 * s, 0),
+    new THREE.Vector3(0, 0, 0),
     new THREE.Vector3(0, toSurface, 0),
   ]);
   tether.geometry.dispose();
@@ -696,6 +755,20 @@ function removeNode(id, silent = false) {
   const idx = state.nodes.findIndex((n) => n.id === id);
   if (idx < 0) return;
   const node = state.nodes[idx];
+  for (const visual of [...state.visuals]) {
+    if (visual.pulse.sourceId === id) {
+      disposeWaveObject(visual.group);
+      state.visuals.splice(state.visuals.indexOf(visual), 1);
+      state.pulses.splice(state.pulses.indexOf(visual.pulse), 1);
+    } else {
+      const path = visual.paths.get(id);
+      if (path) { disposeWaveObject(path.line); disposeWaveObject(path.arrow); visual.paths.delete(id); }
+      visual.pulse.recipientIds.delete(id);
+    }
+  }
+  node.labelObj.removeFromParent();
+  node.label.remove();
+  if (node.float) { node.float.element.remove(); node.float.removeFromParent(); }
   nodesGroup.remove(node.group);
   state.nodes.splice(idx, 1);
   const next = state.nodes[idx] || state.nodes[idx - 1] || null;
@@ -813,7 +886,12 @@ function pickFromEvent(event) {
 }
 
 function pickNode() {
-  const nodeHits = raycaster.intersectObjects(nodesGroup.children, true);
+  // Pick only hulls: surface markers, invisible glows and depth lines are not nodes.
+  const meshes = [];
+  for (const node of state.nodes) node.model.traverse(obj => {
+    if (obj.isMesh && obj !== node.glow) meshes.push(obj);
+  });
+  const nodeHits = raycaster.intersectObjects(meshes, false);
   return nodeHits[0] ? findNode(nodeHits[0].object) : null;
 }
 
@@ -823,7 +901,7 @@ function onPointerDown(event) {
   pickFromEvent(event);
   const node = pickNode();
   pointerStart = { x: event.clientX, y: event.clientY, node };
-  if (node || state.addMode) event.stopPropagation();
+  if (state.addMode) event.stopPropagation();
 }
 
 function onPointerUp(event) {
@@ -873,26 +951,7 @@ function findNode(obj) {
 }
 
 function locateNode(id) {
-  const node = getNode(id);
-  if (!node) return;
-  focusAnim = {
-    t: 0,
-    dur: 0.65,
-    fromPos: camera.position.clone(),
-    fromTarget: controls.target.clone(),
-    toTarget: new THREE.Vector3(node.x, node.y, node.z),
-    toPos: new THREE.Vector3(node.x + 720, node.y + 980, node.z + 1680),
-  };
-}
-
-function updateFocus(dt) {
-  if (!focusAnim) return;
-  focusAnim.t += dt;
-  const u = Math.min(1, focusAnim.t / focusAnim.dur);
-  const s = u * u * (3 - 2 * u);
-  camera.position.lerpVectors(focusAnim.fromPos, focusAnim.toPos, s);
-  controls.target.lerpVectors(focusAnim.fromTarget, focusAnim.toTarget, s);
-  if (u >= 1) focusAnim = null;
+  cameraController.focusNode(getNode(id));
 }
 
 function makePulse(tx, payload, extra = {}) {
@@ -913,9 +972,46 @@ function makePulse(tx, payload, extra = {}) {
   return pulse;
 }
 
-function spawnPulseVisual(pulse, destNode) {
-  const dest = destNode ? new THREE.Vector3(destNode.x, destNode.y, destNode.z) : null;
-  const visual = createWaveVisual(pulse, dest);
+function handleNetworkEvent(event) {
+  if (event.type === 'frame') {
+    for (const child of [...topologyGroup.children]) disposeWaveObject(child);
+    const seen = new Set();
+    for (const node of network.nodes()) for (const id of network.allowed(node.id)) {
+      const other = network.node(id); if (!other) continue;
+      const key = [node.id, id].sort((a, b) => a - b).join('-'); if (seen.has(key)) continue; seen.add(key);
+      const valid = network.evaluate(node, other).success;
+      if (!valid && network.config.topology === 'auto') continue;
+      const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(node.x, node.y, node.z), new THREE.Vector3(other.x, other.y, other.z)]),
+      new THREE.LineBasicMaterial({ color: valid ? 0x66d9d1 : 0xe27a66, transparent: true, opacity: 0.18, depthWrite: false }));
+      topologyGroup.add(line);
+    }
+    return;
+  }
+  if (event.type === 'drop') {
+    pushNodeLog(getNode(event.packet.source), `包 #${event.packet.id} ${event.packet.status}`, 'fail'); return;
+  }
+  const f = event.flight, tx = getNode(f.hop.from), rx = getNode(f.hop.to);
+  if (event.type === 'send') {
+    const pulse = makePulse(tx, `#${f.packet.id} N${f.packet.source}→N${f.packet.destination}`);
+    pulse.startSimTime = event.time; pulse.packetDuration = f.duration; pulse.networkPacket = f.packet.id;
+    configureRecipients(pulse, state.nodes, 'target', rx.id);
+    f.pulse = pulse; spawnPulseVisual(pulse);
+    pushNodeLog(tx, `包 #${f.packet.id} N${tx.id}→N${rx.id}，发送 ${f.duration.toFixed(3)}s`, '', 'tx');
+  } else if (event.type === 'arrival' && rx) {
+    f.pulse.hits.set(rx.id, { ...f.hit, arrivedAt: event.time, completedAt: event.time + f.duration,
+      position: { x: rx.x, y: rx.y, z: rx.z }, overheard: false });
+    spawnFloat(rx, f.hit.inRange ? '信号到达 · 接收中' : '超出范围', f.hit.inRange);
+  } else if (event.type === 'receive' && rx) {
+    f.pulse.hits.get(rx.id).notified = true;
+    rx.hitFlash = f.hit.success ? 1 : 0.45; rx.hitSuccess = f.hit.success;
+    onArrival(rx, f.pulse, f.pulse.hits.get(rx.id));
+    pushNodeLog(rx, `包 #${f.packet.id} 完整接收${f.hit.success ? '成功' : '失败'} @ ${event.time.toFixed(3)}s`, f.hit.success ? 'ok' : 'fail', 'rx');
+  }
+}
+
+function spawnPulseVisual(pulse) {
+  const visual = createWaveVisual(pulse);
   waveGroup.add(visual.group);
   state.pulses.push(pulse);
   state.visuals.push(visual);
@@ -923,6 +1019,8 @@ function spawnPulseVisual(pulse, destNode) {
 }
 
 function transmit() {
+  if (network.status !== 'stopped') return;
+  if (state.mode !== 'local') return;
   const tx = getNode(state.txId);
   if (!tx) {
     if (ui.hint) ui.hint.textContent = '请先设置发射节点。';
@@ -930,24 +1028,32 @@ function transmit() {
   }
   const payload = ui.payload.value.trim() || 'PING';
   const rx = getNode(state.rxId);
+  if (state.sendMode === 'target' && (!rx || rx === tx)) {
+    ui.hint.textContent = '目标发送需要选择不同于 TX 的接收节点。';
+    return;
+  }
   const pulse = makePulse(tx, payload, { directedDst: null });
-  spawnPulseVisual(pulse, rx);
-  pushNodeLog(tx, `N${tx.id} 开始发送「${payload}」  max=${pulse.maxRange}m  f=${pulse.freqKhz}kHz`, '', 'tx');
+  configureRecipients(pulse, state.nodes, state.sendMode, rx?.id);
+  spawnPulseVisual(pulse);
+  pushNodeLog(tx, `N${tx.id} ${state.sendMode === 'broadcast' ? '广播' : `→ N${rx.id} 目标发送`}「${payload}」  max=${pulse.maxRange}m  f=${pulse.freqKhz}kHz`, '', 'tx');
 }
 
 function transmitDirected(src, dst, payload, extra = {}) {
   if (!src || !dst) return;
   const pulse = makePulse(src, payload, { ...extra, directedDst: dst.id });
-  spawnPulseVisual(pulse, dst);
+  configureRecipients(pulse, state.nodes, 'target', dst.id, true);
+  spawnPulseVisual(pulse);
   pushNodeLog(src, `N${src.id} → N${dst.id} 发射「${payload}」  max=${pulse.maxRange}m  f=${pulse.freqKhz}kHz`, '', 'tx');
 }
 
 function updateVisuals() {
   for (let i = state.visuals.length - 1; i >= 0; i--) {
     const visual = state.visuals[i];
-    updateWaveVisual(visual, state.simTime);
-    if (visual.pulse.finished(state.simTime)) {
-      waveGroup.remove(visual.group);
+    updateWaveVisual(visual, state.simTime, getNode, camera, window.innerHeight);
+    const show = document.getElementById('show-acoustic-waves').checked && visual.pulse.sourceId === state.txId;
+    for (const ring of visual.rings) ring.visible = show;
+    if (waveVisualFinished(visual, state.simTime)) {
+      disposeWaveObject(visual.group);
       state.visuals.splice(i, 1);
       state.pulses.splice(state.pulses.indexOf(visual.pulse), 1);
     }
@@ -957,15 +1063,20 @@ function updateVisuals() {
 function updatePhysicsHits() {
   for (const pulse of state.pulses) {
     for (const node of state.nodes) {
-      if (node.id === pulse.sourceId || pulse.hits.has(node.id)) continue;
-      if (pulse.directedDst != null && node.id !== pulse.directedDst) continue;
-      const hit = pulse.evaluateNode(node);
-      const arrived = hit.inRange
-        ? pulse.travelTime(state.simTime) + 1e-4 >= hit.tof
-        : pulse.radius(state.simTime) >= pulse.maxRange - 1e-3;
-      if (arrived) {
-        pulse.hits.set(node.id, hit);
-        node.hitFlash = hit.success ? 1 : 0.45;
+      if (node.online === false) continue;
+      const previous = pulse.hits.get(node.id);
+      if (pulse.networkPacket && previous?.overheard && !previous.notified && state.simTime >= previous.completedAt) {
+        previous.notified = true; node.hitFlash = previous.success ? 1 : 0.45; node.hitSuccess = previous.success;
+        onArrival(node, pulse, previous);
+      }
+      const hit = advanceRecipient(pulse, node, state.simTime);
+      if (hit) {
+        if (pulse.networkPacket) {
+          hit.completedAt = hit.arrivedAt + pulse.packetDuration;
+          continue;
+        }
+        node.hitFlash = hit.inRange ? (hit.success ? 1 : 0.45) : 0;
+        node.hitSuccess = hit.success;
         onArrival(node, pulse, hit);
       }
     }
@@ -976,7 +1087,7 @@ function onArrival(node, pulse, hit) {
   const delayMs = hit.tof * 1000;
   node.lastRx = { pulse, hit };
   if (!hit.inRange) {
-    pushNodeLog(node, `声波到达 N${node.id}：超出最大作用距离 ${hit.distance.toFixed(1)}m > ${pulse.maxRange}m`, 'fail', 'rx');
+    pushNodeLog(node, `N${node.id} 未到达：超出最大作用距离 ${hit.distance.toFixed(1)}m > ${pulse.maxRange}m`, 'fail', 'rx');
     spawnFloat(node, 'OUT OF RANGE', false);
     return;
   }
@@ -992,11 +1103,11 @@ function onArrival(node, pulse, hit) {
   }
   pushNodeLog(
     node,
-    `N${node.id} 接收到数据「${pulse.payload}」  d=${hit.distance.toFixed(1)}m  τ=${delayMs.toFixed(1)}ms  RL=${hit.receivedLevel.toFixed(1)}dB`,
+    `N${node.id} ${hit.overheard ? '旁听到数据' : pulse.sendMode === 'broadcast' ? '接收广播' : '目标接收'}「${pulse.payload}」  d=${hit.distance.toFixed(1)}m  τ=${delayMs.toFixed(1)}ms  RL=${hit.receivedLevel.toFixed(1)}dB`,
     'ok',
     'rx'
   );
-  spawnFloat(node, pulse.payload, true);
+  spawnFloat(node, `${hit.overheard ? '旁听' : '接收'}：${pulse.payload}`, true);
 }
 
 function spawnFloat(node, text, ok) {
@@ -1018,6 +1129,11 @@ function spawnFloat(node, text, ok) {
 }
 
 function refreshNodes() {
+  ui.ping.disabled = network.status !== 'stopped';
+  const broadcast = state.mode === 'local' && state.sendMode === 'broadcast';
+  document.getElementById('rx-select-label').textContent = broadcast ? '观察节点' : '接收节点';
+  document.getElementById('send-mode').value = state.sendMode;
+  ui.ping.textContent = broadcast ? '发送广播' : '发射声波';
   renderNodeList(ui, state.nodes, ctx(), {
     onSelect: (id) => {
       state.selectedId = id;
@@ -1037,6 +1153,8 @@ function refreshNodes() {
     else if (role === 'rx') mat.color.set('#7eb0d4');
     else if (role === 'listen') mat.color.set('#5ad4d0');
     else mat.color.set('#c5c0b5');
+    mat.emissive.copy(mat.color);
+    mat.emissiveIntensity = role === 'tx' || role === 'rx' ? 0.35 : 0.08;
     if (node.selectRing) node.selectRing.visible = node.id === state.selectedId;
     if (node.axes) node.axes.visible = node.id === state.selectedId;
     updateNodeBadges(node);
@@ -1074,7 +1192,11 @@ function refreshNodes() {
 function updateNodeBadges(node) {
   const selected = node.id === state.selectedId;
   const hovered = node.id === state.hoveredId;
-  const role = nodeRole(node, state);
+  let role = nodeRole(node, state);
+  if (network.status !== 'stopped') {
+    role = network.flights.some(f => f.hop.from === node.id && state.simTime < f.hop.sent + f.duration) ? 'tx'
+      : network.flights.some(f => f.hop.to === node.id && f.hop.arrived != null) ? 'rx' : 'normal';
+  }
   node.label.className = `node-label${selected ? ' selected' : ''} role-${role}`;
   const name = escapeHtml(node.name || `N${node.id}`);
   if (selected) {
@@ -1082,7 +1204,11 @@ function updateNodeBadges(node) {
   } else if (hovered) {
     node.label.innerHTML = `<span class="nid">${name}</span><span class="xyz">位置：${fmtCoord(node.x)}, ${fmtCoord(node.y)}, ${fmtCoord(node.z)}</span><span class="xyz">深度：${Math.abs(Math.min(node.y, 0)).toFixed(0)} m</span>`;
   } else {
-    node.label.innerHTML = `<span class="nid">${name}</span>`;
+    node.label.innerHTML = `<span class="nid">${name}</span>${role === 'tx' || role === 'rx' ? `<span class="role-tag">${role.toUpperCase()}</span>` : ''}`;
+  }
+  if (network.status !== 'stopped' && network.config.topology === 'cluster') {
+    const cluster = network.config.clusters.find(c => c.head === node.id || c.members.includes(node.id));
+    if (cluster) node.label.innerHTML += `<span class="role-tag">N${cluster.head}簇${cluster.head === node.id ? ' · 簇头' : ''}</span>`;
   }
 }
 
@@ -1091,14 +1217,15 @@ function fmtCoord(n) {
 }
 
 function updateLinkPanel(metaOnly = false) {
+  const broadcast = state.mode === 'local' && state.sendMode === 'broadcast';
   const tx = getNode(state.txId);
   const rx = getNode(state.rxId);
   if (!tx || !rx || tx.id === rx.id) {
-    renderLinkResult(ui, tx, rx, null);
+    renderLinkResult(ui, tx, rx, null, broadcast);
     return;
   }
   if (rx.lastRx && rx.lastRx.pulse.sourceId === tx.id) {
-    if (metaOnly) renderLinkResult(ui, tx, rx, rx.lastRx.hit);
+    if (metaOnly) renderLinkResult(ui, tx, rx, rx.lastRx.hit, broadcast);
     return;
   }
   const distance = Math.hypot(rx.x - tx.x, rx.y - tx.y, rx.z - tx.z);
@@ -1115,7 +1242,7 @@ function updateLinkPanel(metaOnly = false) {
     inRange: distance <= tx.acoustic.maxRange,
     success: distance <= tx.acoustic.maxRange && levels.receivedLevel >= tx.acoustic.thresholdDb,
   };
-  if (metaOnly) renderLinkResult(ui, tx, rx, hit);
+  if (metaOnly) renderLinkResult(ui, tx, rx, hit, broadcast);
 }
 
 function drawScope() {
@@ -1224,31 +1351,41 @@ function disposeDistVisuals() {
     distGroup.remove(vis.group);
     vis.group.traverse((obj) => {
       obj.geometry?.dispose?.();
+      if (Array.isArray(obj.material)) obj.material.forEach(material => material.dispose());
+      else obj.material?.dispose?.();
       if (obj.element?.parentNode) obj.element.remove();
     });
   }
   distVisuals = [];
 }
 
-function makeDistLine(from, to, color, text) {
+function makeDistLine(from, to, color, text, active = false) {
   const group = new THREE.Group();
   const p0 = new THREE.Vector3(from.x, from.y, from.z);
   const p1 = new THREE.Vector3(to.x, to.y, to.z);
   const geo = new THREE.BufferGeometry().setFromPoints([p0, p1]);
   const line = new THREE.Line(geo, new THREE.LineDashedMaterial({
     color,
-    dashSize: 40,
-    gapSize: 24,
+    dashSize: active ? 180 : 80,
+    gapSize: active ? 100 : 60,
     transparent: true,
-    opacity: 0.45,
+    opacity: active ? 0.22 : 0.25,
+    depthTest: !active,
+    depthWrite: false,
+    fog: !active,
   }));
   line.computeLineDistances();
   group.add(line);
+  line.renderOrder = active ? 19 : 0;
   const el = document.createElement('div');
   el.className = 'dist-label';
   el.textContent = text;
   const css = new CSS2DObject(el);
   css.position.copy(p0).lerp(p1, 0.5);
+  if (active) {
+    css.position.y -= 650;
+    css.center.set(0.5, 0);
+  }
   group.add(css);
   distGroup.add(group);
   distVisuals.push({ group, fromId: from.id, toId: to.id });
@@ -1260,7 +1397,9 @@ function updateDistanceOverlays() {
   const rx = getNode(state.rxId);
   if (tx && rx && tx.id !== rx.id) {
     const d = Math.hypot(rx.x - tx.x, rx.y - tx.y, rx.z - tx.z);
-    makeDistLine(tx, rx, 0xe7b56a, `${d.toFixed(0)} m`);
+    const broadcast = state.mode === 'local' && state.sendMode === 'broadcast';
+    makeDistLine(tx, rx, broadcast ? 0x66d9d1 : 0xffcb70,
+      `${broadcast ? '广播观察' : '目标参考'} N${tx.id} → N${rx.id} · ${d.toFixed(0)} m${d > tx.acoustic.maxRange ? ' · 超出范围' : ''}`, true);
   }
   if (ui.showAllDist?.checked) {
     const selected = getNode(state.selectedId);
@@ -1278,11 +1417,8 @@ function updateDistanceOverlays() {
 function animate() {
   requestAnimationFrame(animate);
   const dt = Math.min(clock.getDelta(), 0.05);
-  if (state.mode === 'live') {
-    state.simTime += dt;
-  } else {
-    state.simTime += dt * Number(ui.timescale.value);
-  }
+  const simDt = network.status === 'paused' ? 0 : dt * (state.mode === 'live' ? 1 : Number(ui.timescale.value));
+  state.simTime += simDt;
   water.material.uniforms.uTime.value = clock.elapsedTime;
   basin.bottomMat.uniforms.uTime.value = clock.elapsedTime;
   if (camera.position.y < 0) {
@@ -1292,8 +1428,9 @@ function animate() {
     scene.fog.color.set('#8fb8b8');
     scene.fog.density = 0.000035;
   }
-  updateFocus(dt);
-  updateNodeMotion(dt);
+  cameraController.update(dt);
+  updateNodeMotion(simDt);
+  network.update(state.simTime);
   updatePhysicsHits();
   updateVisuals();
   updateLinkPanel(true);
@@ -1301,6 +1438,13 @@ function animate() {
   statusClock += dt;
   if (statusClock > 0.25) {
     statusClock = 0;
+    networkPanel.render();
+    for (const node of state.nodes) updateNodeBadges(node);
+    for (const id of ['n-slot-index', 'n-slot-count', 'n-slot-ms', 'n-net-dst', 'n-net-hop']) {
+      const field = document.getElementById(id);
+      if (field) { field.disabled = network.status !== 'stopped'; field.title = network.status !== 'stopped' ? '自动运行结果见组网面板；此处保留手动配置' : ''; }
+    }
+    ui.ping.disabled = network.status !== 'stopped';
     patchNodeStatus(ui, state.nodes, ctx());
     const selected = getNode(state.selectedId);
     if (selected && ui.nStatusText && !ui.inspBody?.contains(document.activeElement)) {
@@ -1308,14 +1452,27 @@ function animate() {
     }
   }
   for (const node of state.nodes) {
+    if (network.status !== 'stopped') {
+      const transmitting = network.flights.some(f => f.hop.from === node.id && state.simTime < f.hop.sent + f.duration);
+      const receiving = network.flights.some(f => f.hop.to === node.id && f.hop.arrived != null);
+      node.group.userData.bodyMat.emissiveIntensity = transmitting || receiving ? 0.75 : 0.08;
+      node.group.userData.bodyMat.color.set(transmitting ? 0xffcb70 : receiving ? 0x66d9d1 : 0xc5c0b5);
+    }
+    const desired = uuvVisualScale(camera.position.distanceTo(node.group.position), node.id === state.selectedId);
+    const scale = THREE.MathUtils.damp(node.model.scale.x, desired, visualizationConfig.scaleSmoothing, dt);
+    node.model.scale.setScalar(scale);
+    node.labelObj.position.y = visualizationConfig.labelHeight * scale;
+    node.selectRing.scale.setScalar(scale * 0.7);
+    node.axes.scale.setScalar(scale);
+    node.axes.position.y = 8 * scale;
+    if (node.float) node.float.position.y = (visualizationConfig.labelHeight + 10) * scale;
     node.hitFlash *= 0.965;
-    node.glow.material.opacity = node.hitFlash;
-    node.glow.material.color.set(node.id === state.rxId ? 0xffe08a : 0x7ee7d0);
+    node.glow.material.opacity = node.hitFlash * 0.22;
+    node.glow.material.color.set(node.hitSuccess === false ? 0xe27a66 : node.id === state.rxId ? 0xffe08a : 0x7ee7d0);
     node.glow.scale.setScalar(1 + node.hitFlash * 1.6);
     const spin = node.moveEnabled ? 1.2 + node.speed * 0.22 : node.y < -0.4 ? 2.2 : 0.8;
     if (node.propeller) node.propeller.rotation.z += dt * spin;
   }
-  controls.update();
   renderer.render(scene, camera);
   labelRenderer.render(scene, camera);
 }

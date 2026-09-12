@@ -9,12 +9,21 @@
   <body>
     <div id="app">
       <div id="canvas-root"></div>
+      <nav class="view-controls" aria-label="场景观察控制">
+        <button data-view="setTopView">俯视</button>
+        <button data-view="setSideView">侧视</button>
+        <button data-view="setPerspectiveView">透视</button>
+        <button data-view="fitAllNodes">适应全部节点</button>
+        <button data-view="focusLink">聚焦链路</button>
+        <label><input id="show-acoustic-waves" type="checkbox" />显示声波波纹</label>
+        <small>单击选择 · 双击聚焦 · 拖动旋转 · 滚轮缩放</small>
+      </nav>
       <div id="hud">
         <header class="topbar">
           <div class="brand">
             <div class="brand-mark">SONAR</div>
             <div>
-              <h1>20 km 水域</h1>
+              <h1 id="basin-title">20 km 水域</h1>
               <p>水声节点实验池</p>
             </div>
           </div>
@@ -25,6 +34,13 @@
           <p id="live-status">仿真桥接未连接</p>
           <p id="mode-hint" class="top-hint">本地模拟</p>
           <div class="top-actions">
+            <details class="basin-settings"><summary>水域大小</summary>
+              <div><label for="basin-diameter">水域直径（km）</label>
+                <input id="basin-diameter" type="number" min="1" max="100" step="0.1" value="20" />
+                <button id="apply-basin" type="button">应用</button>
+                <p id="basin-message" role="status">直径 20 km · 半径 10 km；不改变通信距离。重置场景恢复 20 km。</p>
+              </div>
+            </details>
             <button id="btn-add" class="primary" type="button">+ 添加节点</button>
           </div>
         </header>
@@ -267,12 +283,15 @@
               <p class="hint">节点从 ACE 接入后出现。只显示真实 src→dst。</p>
             </section>
             <div id="local-tx" class="mode-block console-controls">
+              <label class="inline">发送模式
+                <select id="send-mode"><option value="target">目标发送</option><option value="broadcast">广播</option></select>
+              </label>
               <label class="inline">
                 发射节点
                 <select id="tx-select"></select>
               </label>
               <label class="inline">
-                接收节点
+                <span id="rx-select-label">接收节点</span>
                 <select id="rx-select"></select>
               </label>
               <label class="inline grow">
@@ -285,9 +304,9 @@
                   <option value="0.05">0.05×</option>
                   <option value="0.10">0.10×</option>
                   <option value="0.20">0.20×</option>
-                  <option value="0.40" selected>0.40×</option>
+                  <option value="0.40">0.40×</option>
                   <option value="0.70">0.70×</option>
-                  <option value="1.00">1.00×</option>
+                  <option value="1.00" selected>1.00×</option>
                 </select>
               </label>
               <button id="btn-ping" class="accent" type="button">发射声波</button>

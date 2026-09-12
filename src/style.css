@@ -709,6 +709,46 @@ input[type="number"]::-webkit-inner-spin-button { opacity: 1; }
 }
 
 .hidden { display: none !important; }
+.basin-settings { position: relative; }
+.basin-settings summary { cursor: pointer; white-space: nowrap; }
+.basin-settings > div { position: absolute; right: 0; top: 30px; width: 280px; padding: 14px; background: #0b2227; border: 1px solid var(--line); border-radius: 10px; z-index: 12; }
+.basin-settings input { width: 110px; margin: 8px; }
+.basin-settings p { white-space: normal; font-size: 12px; }
+.topbar { position: relative; z-index: 10; }
+.network-panel { padding: 8px; border-bottom: 1px solid var(--line); font-size: 12px; }
+.network-panel > details > summary { cursor: pointer; color: var(--cyan); }
+.network-panel > details[open] { position: fixed; right: 14px; top: 90px; width: 308px; max-height: calc(100vh - 430px); overflow: auto; padding: 12px; background: #0b2227; border: 1px solid var(--line); border-radius: 10px; z-index: 8; }
+.network-panel fieldset { border: 0; display: flex; flex-wrap: wrap; gap: 10px; padding: 10px 0; }
+.network-panel label { display: inline-flex; gap: 5px; align-items: center; }
+.network-panel input { width: 80px; }
+.network-panel select { width: auto; }
+.network-panel #network-chain, .network-panel #network-clusters { flex-basis: 100%; }
+.network-panel #network-chain[hidden], .network-panel #network-clusters[hidden] { display: none; }
+.network-actions { display: flex; gap: 8px; }
+#network-packets { max-height: 110px; overflow: auto; }
+#network-nodes { margin: 6px 0; }
+#network-packets summary { cursor: pointer; }
+.view-controls {
+  position: absolute;
+  z-index: 5;
+  top: 92px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: calc(100vw - 560px);
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px;
+  border-radius: 10px;
+  background: rgba(6, 18, 22, 0.8);
+}
+.view-controls label { display: flex; align-items: center; gap: 5px; font-size: 12px; }
+.view-controls input { width: auto; accent-color: var(--cyan); }
+.view-controls small { width: 100%; text-align: center; opacity: 0.65; }
+@media (max-width: 800px) {
+  .view-controls { top: 80px; max-width: 95vw; width: 95vw; }
+}
 
 .panel::-webkit-scrollbar,
 .log::-webkit-scrollbar,
