@@ -10,128 +10,361 @@
     <div id="app">
       <div id="canvas-root"></div>
       <div id="hud">
-        <header class="brand">
-          <div class="brand-mark">SONAR</div>
-          <div>
-            <h1>20 km 水域 · 三维声传播</h1>
-            <p>直径 20 km · 深度 4 km · 淡色透明波前</p>
-            <p id="live-status">仿真桥接未连接</p>
+        <header class="topbar">
+          <div class="brand">
+            <div class="brand-mark">SONAR</div>
+            <div>
+              <h1>20 km 水域</h1>
+              <p>水声节点实验池</p>
+            </div>
+          </div>
+          <div class="mode-switch" role="tablist">
+            <button id="mode-local" class="active" type="button" data-mode="local">本地模拟</button>
+            <button id="mode-live" type="button" data-mode="live">实时仿真</button>
+          </div>
+          <p id="live-status">仿真桥接未连接</p>
+          <p id="mode-hint" class="top-hint">本地模拟</p>
+          <div class="top-actions">
+            <button id="btn-add" class="primary" type="button">+ 添加节点</button>
           </div>
         </header>
 
         <aside class="panel left">
-          <section>
-            <h2>节点</h2>
-            <div class="row">
-              <button id="btn-add" class="primary" type="button">点击投放</button>
-              <button id="btn-remove" type="button">删除选中</button>
+          <div class="panel-head">
+            <h2>节点管理</h2>
+            <span id="node-count" class="count-pill">0</span>
+          </div>
+          <input id="node-search" type="search" placeholder="搜索节点" autocomplete="off" spellcheck="false" />
+          <div id="node-list" class="node-list"></div>
+          <p id="node-empty" class="hint">还没有节点</p>
+        </aside>
+
+        <aside class="panel right" id="inspector">
+          <div class="panel-head">
+            <h2>节点详情</h2>
+          </div>
+          <div id="insp-empty" class="empty-state">选择一个节点查看详细信息</div>
+          <div id="insp-body" class="hidden">
+            <div class="insp-head">
+              <strong id="insp-id">N—</strong>
+              <span id="insp-origin" class="pill">—</span>
+              <span id="insp-role" class="pill">—</span>
+              <span id="insp-status" class="status online"><i></i>在线</span>
             </div>
-            <div class="row">
-              <button id="btn-tx" type="button">设为发射</button>
-              <button id="btn-rx" type="button">设为监听</button>
+            <div class="tabs" id="insp-tabs">
+              <button type="button" data-tab="basic" class="active">基本</button>
+              <button type="button" data-tab="pose">位置</button>
+              <button type="button" data-tab="acoustic">声学</button>
+              <button type="button" data-tab="comm">通信</button>
             </div>
-            <label>
-              投放深度 <span id="depth-val">水面 0 m</span>
-              <input id="add-depth" type="range" min="-4000" max="0" step="10" value="0" />
-            </label>
-            <p class="hint" id="mode-hint">当前：浏览。可点选节点，或进入投放模式在水面上单击。</p>
-            <div class="coord-grid">
-              <label>X (m)<input id="pos-x" type="number" step="10" value="0" /></label>
-              <label>Z (m)<input id="pos-z" type="number" step="10" value="0" /></label>
-              <label>深度 Y (m)<input id="pos-y" type="number" step="10" value="0" /></label>
+
+            <div class="tab-panel" data-panel="basic">
+              <div class="field">
+                <label>节点 ID</label>
+                <input id="n-id" type="text" readonly />
+                <span class="unit"></span>
+              </div>
+              <div class="field">
+                <label>节点名称</label>
+                <input id="n-name" type="text" maxlength="24" spellcheck="false" />
+                <span class="unit"></span>
+              </div>
+              <div class="field">
+                <label>节点类型</label>
+                <select id="n-origin">
+                  <option value="local">本机节点</option>
+                  <option value="live">仿真节点</option>
+                  <option value="real">真实节点</option>
+                </select>
+                <span class="unit"></span>
+              </div>
+              <div class="field">
+                <label>当前角色</label>
+                <div id="n-role-text" class="readonly">普通</div>
+                <span class="unit"></span>
+              </div>
+              <div class="field">
+                <label>运行状态</label>
+                <div id="n-status-text" class="readonly">在线</div>
+                <span class="unit"></span>
+              </div>
+              <div class="role-actions">
+                <button id="btn-role-normal" type="button">普通</button>
+                <button id="btn-tx" type="button">TX</button>
+                <button id="btn-rx" type="button">RX</button>
+                <button id="btn-listen" type="button">监听</button>
+              </div>
             </div>
-            <div class="row">
-              <button id="btn-apply-pos" type="button">应用坐标</button>
-              <button id="btn-surface" type="button">放到水面</button>
-            </div>
-            <label>
-              相对发射距离 (m)
-              <div class="row tight">
-                <input id="rel-dist" type="number" step="100" value="2000" />
+
+            <div class="tab-panel hidden" data-panel="pose">
+              <div class="field">
+                <label>X</label>
+                <input id="pos-x" type="number" step="10" value="0" />
+                <span class="unit">m</span>
+              </div>
+              <div class="field">
+                <label>Y</label>
+                <input id="pos-y" type="number" step="10" value="0" />
+                <span class="unit">m</span>
+              </div>
+              <div class="field">
+                <label>Z</label>
+                <input id="pos-z" type="number" step="10" value="0" />
+                <span class="unit">m</span>
+              </div>
+              <div class="field">
+                <label>深度</label>
+                <input id="pos-depth" type="number" min="0" max="3980" step="10" value="0" />
+                <span class="unit">m</span>
+              </div>
+              <div class="row">
+                <button id="btn-apply-pos" type="button">应用位置</button>
+                <button id="btn-focus" type="button">定位到节点</button>
+              </div>
+              <div class="row">
+                <button id="btn-surface" type="button">放到水面</button>
                 <button id="btn-rel-dist" type="button">按距离放置</button>
               </div>
-            </label>
-            <h2 class="sub">移动</h2>
-            <label class="check">
-              <input id="move-enabled" type="checkbox" />
-              启用巡航
-            </label>
-            <div class="coord-grid">
-              <label>航速 (m/s)<input id="move-speed" type="number" min="0" max="80" step="1" value="8" /></label>
-              <label>航向 (°)<input id="move-heading" type="number" min="0" max="359" step="1" value="90" /></label>
-              <label>升沉 (m/s)<input id="move-vspeed" type="number" step="0.5" value="0" /></label>
+              <div class="field">
+                <label>相对发射</label>
+                <input id="rel-dist" type="number" step="100" value="5000" />
+                <span class="unit">m</span>
+              </div>
+              <h3 class="tiny">到其它节点</h3>
+              <div id="dist-list" class="dist-list"></div>
+              <h3 class="tiny">巡航</h3>
+              <label class="check"><input id="move-enabled" type="checkbox" />启用巡航</label>
+              <div class="field">
+                <label>航速</label>
+                <input id="move-speed" type="number" min="0" max="80" step="1" value="8" />
+                <span class="unit">m/s</span>
+              </div>
+              <div class="field">
+                <label>航向</label>
+                <input id="move-heading" type="number" min="0" max="359" step="1" value="90" />
+                <span class="unit">°</span>
+              </div>
+              <div class="field">
+                <label>升沉</label>
+                <input id="move-vspeed" type="number" step="0.5" value="0" />
+                <span class="unit">m/s</span>
+              </div>
+              <label class="check"><input id="move-hold" type="checkbox" checked />保持当前深度</label>
+              <div class="row">
+                <button id="btn-move-apply" type="button">应用移动</button>
+                <button id="btn-move-stop" type="button">停止</button>
+              </div>
             </div>
-            <label class="check">
-              <input id="move-hold" type="checkbox" checked />
-              保持当前深度
-            </label>
-            <div class="row">
-              <button id="btn-move-apply" type="button">应用移动</button>
-              <button id="btn-move-stop" type="button">停止</button>
-            </div>
-            <div id="node-list" class="node-list"></div>
-          </section>
 
-          <section>
-            <h2>发射参数</h2>
-            <label>
-              数据载荷
-              <input id="payload" type="text" maxlength="24" value="PING-OK" />
-            </label>
-            <label>
-              最大作用距离 <span id="range-val">5000 m</span>
-              <input id="range" type="range" min="200" max="20000" step="50" value="5000" />
-              <input id="range-num" type="number" min="100" max="20000" step="50" value="5000" />
-            </label>
-            <label>
-              源级 SL <span id="sl-val">200 dB</span>
-              <input id="sl" type="range" min="140" max="230" step="1" value="200" />
-            </label>
-            <label>
-              载波频率 <span id="freq-val">12 kHz</span>
-              <input id="freq" type="range" min="5" max="60" step="1" value="12" />
-            </label>
-            <label>
-              检测门限 <span id="th-val">90 dB</span>
-              <input id="th" type="range" min="70" max="150" step="1" value="90" />
-            </label>
-            <label>
-              时间倍率（慢动作） <span id="scale-val">0.20×</span>
-              <input id="timescale" type="range" min="0.02" max="1" step="0.01" value="0.20" />
-            </label>
-            <div class="row">
+            <div class="tab-panel hidden" data-panel="acoustic">
+              <div class="field">
+                <label>发射声源级</label>
+                <input id="n-sl" type="number" min="140" max="230" step="1" value="200" />
+                <span class="unit">dB</span>
+              </div>
+              <div class="field">
+                <label>载波频率</label>
+                <input id="n-freq" type="number" min="5" max="60" step="1" value="12" />
+                <span class="unit">kHz</span>
+              </div>
+              <div class="field">
+                <label>带宽</label>
+                <input id="n-bw" type="number" min="0.1" max="20" step="0.1" value="4" />
+                <span class="unit">kHz</span>
+              </div>
+              <div class="field">
+                <label>最大作用距离</label>
+                <input id="n-range" type="number" min="200" max="20000" step="50" value="5000" />
+                <span class="unit">m</span>
+              </div>
+              <div class="field">
+                <label>保护间隔</label>
+                <input id="n-guard" type="number" min="0" max="5000" step="10" value="150" />
+                <span class="unit">ms</span>
+              </div>
+              <div class="field">
+                <label>接收灵敏度</label>
+                <input id="n-th" type="number" min="70" max="150" step="1" value="90" />
+                <span class="unit">dB</span>
+              </div>
+            </div>
+
+            <div class="tab-panel hidden" data-panel="comm">
+              <div class="field">
+                <label>MAC 时隙号</label>
+                <input id="n-slot-index" type="number" step="1" value="0" />
+                <span class="unit"></span>
+              </div>
+              <div class="field">
+                <label>时隙数</label>
+                <input id="n-slot-count" type="number" step="1" value="3" />
+                <span class="unit"></span>
+              </div>
+              <div class="field">
+                <label>时隙时长</label>
+                <input id="n-slot-ms" type="number" step="100" value="5000" />
+                <span class="unit">ms</span>
+              </div>
+              <div class="field">
+                <label>信道</label>
+                <input id="n-channel" type="number" step="1" value="0" />
+                <span class="unit"></span>
+              </div>
+              <div class="field">
+                <label>PHY Mode</label>
+                <input id="n-phy-mode" type="number" step="1" value="1" />
+                <span class="unit"></span>
+              </div>
+              <div class="field">
+                <label>FD</label>
+                <input id="n-fd" type="number" step="1" value="0" />
+                <span class="unit"></span>
+              </div>
+              <div class="field">
+                <label>功率</label>
+                <input id="n-power" type="number" step="1" value="-20" />
+                <span class="unit">dB</span>
+              </div>
+              <div class="field">
+                <label>速率</label>
+                <input id="n-rate" type="number" step="1" value="24" />
+                <span class="unit">Bd</span>
+              </div>
+              <div class="field">
+                <label>NET 地址</label>
+                <input id="n-addr" type="number" step="1" value="0" readonly />
+                <span class="unit"></span>
+              </div>
+              <div class="field">
+                <label>NET 目标</label>
+                <input id="n-net-dst" type="number" step="1" value="0" />
+                <span class="unit"></span>
+              </div>
+              <div class="field">
+                <label>下一跳</label>
+                <input id="n-net-hop" type="number" step="1" value="0" />
+                <span class="unit"></span>
+              </div>
+            </div>
+          </div>
+        </aside>
+
+        <div id="place-banner" class="place-banner hidden">节点放置模式 · 点击水域确定位置 · ESC 取消</div>
+
+        <footer class="console" id="console">
+          <div class="console-head">
+            <div class="tabs" id="console-tabs">
+              <button type="button" data-console="sim" class="active">通信</button>
+              <button type="button" data-console="log">日志</button>
+            </div>
+            <div class="console-tools">
+              <label class="check slim"><input id="show-all-dist" type="checkbox" />显示全部距离</label>
+              <button id="btn-console-toggle" type="button">折叠</button>
+            </div>
+          </div>
+          <div id="console-sim" class="console-body">
+            <section id="live-controls" class="mode-block hidden">
+              <p class="hint">节点从 ACE 接入后出现。只显示真实 src→dst。</p>
+            </section>
+            <div id="local-tx" class="mode-block console-controls">
+              <label class="inline">
+                发射节点
+                <select id="tx-select"></select>
+              </label>
+              <label class="inline">
+                接收节点
+                <select id="rx-select"></select>
+              </label>
+              <label class="inline grow">
+                数据载荷
+                <input id="payload" type="text" maxlength="24" value="PING-OK" spellcheck="false" />
+              </label>
+              <label class="inline">
+                时间倍率
+                <select id="timescale">
+                  <option value="0.05">0.05×</option>
+                  <option value="0.10">0.10×</option>
+                  <option value="0.20">0.20×</option>
+                  <option value="0.40" selected>0.40×</option>
+                  <option value="0.70">0.70×</option>
+                  <option value="1.00">1.00×</option>
+                </select>
+              </label>
               <button id="btn-ping" class="accent" type="button">发射声波</button>
-              <button id="btn-demo" type="button">重置演示</button>
+              <button id="btn-reset-wave" type="button">重置传播</button>
+              <button id="btn-demo" type="button">重置场景</button>
             </div>
-          </section>
-        </aside>
-
-        <aside class="panel right">
-          <section>
-            <h2>监听节点 · 接收动画</h2>
-            <div id="rx-meta" class="meta">尚未选择监听节点</div>
-            <canvas id="scope" width="420" height="140"></canvas>
-            <div id="decode" class="decode">
-              <span class="label">解码</span>
-              <span id="decode-text" class="glyphs">—</span>
+            <div class="console-main">
+              <div class="link-panel">
+                <div id="rx-meta" class="link-title">TX — → RX —</div>
+                <ul id="physics" class="physics"></ul>
+                <div id="decode" class="decode">
+                  <span class="label">解码</span>
+                  <span id="decode-text" class="glyphs">—</span>
+                </div>
+              </div>
+              <canvas id="scope" width="420" height="140"></canvas>
             </div>
-            <ul id="physics" class="physics"></ul>
-          </section>
-          <section>
-            <h2>到达日志</h2>
+          </div>
+          <div id="console-log" class="console-body hidden">
+            <div class="log-tools">
+              <label class="check slim"><input id="log-follow" type="checkbox" checked />自动跟随</label>
+              <button id="btn-log-clear" type="button">清空</button>
+            </div>
             <div id="log" class="log"></div>
-          </section>
-        </aside>
-
-        <footer class="legend">
-          <span>拖拽旋转 · 滚轮缩放 · 可潜到水下</span>
-          <span class="swatch tx"></span>发射
-          <span class="swatch rx"></span>监听
-          <span class="swatch wave"></span>球面波前
-          <span>声速 1480 m/s · 直径 20 km · 深 4 km</span>
+          </div>
         </footer>
       </div>
     </div>
+
+    <div id="add-dialog" class="overlay hidden">
+      <div class="dialog" role="dialog" aria-labelledby="add-title">
+        <h2 id="add-title">添加节点</h2>
+        <div class="field">
+          <label>节点名称</label>
+          <input id="add-name" type="text" maxlength="24" spellcheck="false" />
+          <span class="unit"></span>
+        </div>
+        <div class="field">
+          <label>深度</label>
+          <input id="add-depth" type="number" min="0" max="3980" step="10" value="80" />
+          <span class="unit">m</span>
+        </div>
+        <fieldset class="place-method">
+          <legend>放置方式</legend>
+          <label class="check"><input type="radio" name="place-method" value="click" checked />点击水域放置</label>
+          <label class="check"><input type="radio" name="place-method" value="coords" />输入坐标</label>
+        </fieldset>
+        <div id="add-coords" class="hidden">
+          <div class="field">
+            <label>X</label>
+            <input id="add-x" type="number" step="10" value="0" />
+            <span class="unit">m</span>
+          </div>
+          <div class="field">
+            <label>Z</label>
+            <input id="add-z" type="number" step="10" value="0" />
+            <span class="unit">m</span>
+          </div>
+        </div>
+        <div class="row">
+          <button id="btn-add-cancel" type="button">取消</button>
+          <button id="btn-add-confirm" class="primary" type="button">开始放置</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="node-menu" class="menu hidden">
+      <button type="button" data-act="edit">编辑</button>
+      <button type="button" data-act="tx">设为发射节点</button>
+      <button type="button" data-act="rx">设为接收节点</button>
+      <button type="button" data-act="listen">设为监听节点</button>
+      <button type="button" data-act="focus">定位到节点</button>
+      <button type="button" data-act="copy">复制节点</button>
+      <hr />
+      <button type="button" data-act="delete" class="danger">删除节点</button>
+    </div>
+
     <script type="module" src="/src/main.js"></script>
   </body>
 </html>

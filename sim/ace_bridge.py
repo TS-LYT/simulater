@@ -8,12 +8,16 @@ from __future__ import print_function
 
 import argparse
 import json
+import os
+import re
 import select
 import socket
 import struct
+import sys
 import threading
 import time
 import traceback
+from urllib.parse import parse_qs, urlparse
 
 try:
     from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
@@ -25,6 +29,11 @@ except ImportError:
 
 ACE_PACKET_SIZE = 8 * 4 + 5120
 HEADER = struct.Struct("<8i")
+
+SIM_ROOT = os.path.dirname(os.path.abspath(__file__))
+if SIM_ROOT not in sys.path:
+    sys.path.insert(0, SIM_ROOT)
+import replay_db
 
 clients = []
 clients_lock = threading.Lock()
@@ -67,12 +76,33 @@ def parse_packet(buf):
         "src": int(src),
         "dst": int(dst),
         "mode": int(mode),
+        "fd": int(fd),
+        "power": int(power),
+        "guard": int(guard),
         "payload_size": int(size),
         "payload": text[:80],
+        "phy": {
+            "fd": int(fd),
+            "mode": int(mode),
+            "power": int(power),
+            "guardTime": int(guard),
+        },
     }
 
 
+
+def _query_ids(query):
+    ids = []
+    for item in query.get("ids", []):
+        for part in str(item).split(","):
+            part = part.strip()
+            if part:
+                ids.append(part)
+    return ids
+
+
 class SSEHandler(BaseHTTPRequestHandler):
+
     protocol_version = "HTTP/1.1"
 
     def log_message(self, fmt, *args):
@@ -88,20 +118,44 @@ class SSEHandler(BaseHTTPRequestHandler):
         self._cors()
         self.end_headers()
 
+    def _send_json(self, payload, status=200):
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        self.send_response(status)
+        self._cors()
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def do_GET(self):
-        if self.path.startswith("/health"):
-            body = b'{"ok":true}\n'
-            self.send_response(200)
-            self._cors()
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
+        parsed = urlparse(self.path)
+        path = parsed.path
+        query = parse_qs(parsed.query)
+
+        if path == "/health" or path.startswith("/health"):
+            self._send_json({"ok": True})
             return
-        if not self.path.startswith("/events"):
-            self.send_response(404)
-            self._cors()
-            self.end_headers()
+
+        if path == "/api/sources":
+            self._send_json({"sources": replay_db.list_sources(SIM_ROOT)})
+            return
+
+        if path == "/api/replay/events":
+            ids = _query_ids(query)
+            paths = replay_db.resolve_source_paths(SIM_ROOT, ids)
+            self._send_json(replay_db.load_events(paths, sim_root=SIM_ROOT))
+            return
+
+        match = re.match(r"^/api/nodes/([^/]+)/records$", path)
+        if match:
+            ids = _query_ids(query)
+            paths = replay_db.resolve_source_paths(SIM_ROOT, ids)
+            node_id = match.group(1)
+            self._send_json(replay_db.node_records(paths, node_id, sim_root=SIM_ROOT))
+            return
+
+        if not path.startswith("/events"):
+            self._send_json({"error": "not found"}, status=404)
             return
         self.send_response(200)
         self._cors()

@@ -51,14 +51,18 @@ start_node() {
     start_bg "node${id}" bash -c "cd '${PACK}/node${id}' && exec ./run.sh"
 }
 
+start_node 5
+sleep 0.3
+start_node 4
+sleep 0.3
 start_node 3
-sleep 0.4
+sleep 0.3
 start_node 2
-sleep 0.4
+sleep 0.3
 start_node 1
 
 echo "live pids:"
-for f in simulator bridge node3 node2 node1; do
+for f in simulator bridge node5 node4 node3 node2 node1; do
     echo "  ${f}=$(cat "${LOG}/${f}.pid")"
 done
 echo "web: http://localhost:5173/"
