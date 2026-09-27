@@ -4,6 +4,8 @@
 
 更完整的迭代说明见 [`工作记录.md`](./工作记录.md)。
 
+当前版本的变更概览见 [`CHANGELOG.md`](./CHANGELOG.md)，模块与收发流程见 [`docs/code_logic.md`](./docs/code_logic.md)。
+
 ## 尺度与物理
 
 - 1 世界单位 = 1 米
