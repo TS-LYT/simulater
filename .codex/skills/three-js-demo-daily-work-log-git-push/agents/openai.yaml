@@ -1,0 +1,4 @@
+interface:
+  display_name: "Three.js Demo Daily Log & Git Push"
+  short_description: "Write demo daily logs, validate, commit, and push safely"
+  default_prompt: "Use $three-js-demo-daily-work-log-git-push to summarize today’s Three.js demo work, validate it, commit the intended changes, and push them."
